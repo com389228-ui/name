@@ -30,6 +30,9 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
+      - name: Regenerate Android Project Structure
+        run: flutter create . --overwrite
+
       - name: Build APK
         run: flutter build apk --release
 
@@ -38,4 +41,3 @@ jobs:
         with:
           name: google-app-release
           path: build/app/outputs/flutter-apk/app-release.apk
-          
