@@ -1,4 +1,4 @@
-name: Build Shivzo APK
+Name: Build Shivzo Compact APK
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
       - name: Regenerate Clean Project
         run: flutter create . --org com.shivzo --project-name app --overwrite
 
-      # 2. Add Packages
+      # 2. Add Packages (Added shared_preferences)
       - name: Add Packages
         run: |
           flutter pub add webview_flutter
@@ -39,6 +39,8 @@ jobs:
           flutter pub add permission_handler
           flutter pub add firebase_core
           flutter pub add firebase_messaging
+          flutter pub add flutter_local_notifications
+          flutter pub add shared_preferences
 
       # 3. Setup Google Services JSON
       - name: Setup Google Services JSON
@@ -64,6 +66,11 @@ jobs:
                   android:label="Shivzo"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
+                  
+                  <meta-data
+                      android:name="com.google.firebase.messaging.default_notification_channel_id"
+                      android:value="high_importance_channel" />
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -88,7 +95,7 @@ jobs:
           </manifest>
           EOF
 
-      # 4.5. Set minSdkVersion to 21
+      # 4.5. Set minSdkVersion to 21 & Enable Shrink
       - name: Set minSdkVersion to 21
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
@@ -104,10 +111,24 @@ jobs:
           import 'package:permission_handler/permission_handler.dart';
           import 'package:firebase_core/firebase_core.dart';
           import 'package:firebase_messaging/firebase_messaging.dart';
+          import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+
+          const AndroidNotificationChannel channel = AndroidNotificationChannel(
+            'high_importance_channel',
+            'High Importance Notifications',
+            description: 'This channel is used for important notifications.',
+            importance: Importance.max,
+            playSound: true,
+          );
+
+          final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+              FlutterLocalNotificationsPlugin();
 
           @pragma('vm:entry-point')
           Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             await Firebase.initializeApp();
+            debugPrint("Background Message Received: ${message.messageId}");
           }
 
           void main() async {
@@ -115,8 +136,19 @@ jobs:
             try {
               await Firebase.initializeApp();
               FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+              await flutterLocalNotificationsPlugin
+                  .resolvePlatformSpecificImplementation<
+                      AndroidFlutterLocalNotificationsPlugin>()
+                  ?.createNotificationChannel(channel);
+
+              await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+                alert: true,
+                badge: true,
+                sound: true,
+              );
             } catch (e) {
-              debugPrint("Firebase init note: $e");
+              debugPrint("Firebase init error: $e");
             }
             runApp(const MyApp());
           }
@@ -137,23 +169,46 @@ jobs:
             const WebViewScreen({super.key});
 
             @override
-            State<WebViewScreen> createState() => _WebViewScreenState();
+            Widget build(BuildContext context) {
+              return const Scaffold(
+                body: SafeArea(
+                  child: WebViewWidgetContainer(),
+                ),
+              );
+            }
           }
 
-          class _WebViewScreenState extends State<WebViewScreen> {
+          class WebViewWidgetContainer extends StatefulWidget {
+            const WebViewWidgetContainer({super.key});
+
+            @override
+            State<WebViewWidgetContainer> createState() => _WebViewWidgetContainerState();
+          }
+
+          class _WebViewWidgetContainerState extends State<WebViewWidgetContainer> {
             late final WebViewController controller;
+            bool isLoading = true;
 
             @override
             void initState() {
               super.initState();
-              _setupFirebaseMessaging();
               _requestPermissions();
+              _setupFirebaseMessaging();
 
               final WebViewController controller = WebViewController();
 
               controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                ..setBackgroundColor(const Color(0x00000000))
+                ..setBackgroundColor(const Color(0xFFFFFFFF))
+                ..setNavigationDelegate(
+                  NavigationDelegate(
+                    onPageFinished: (String url) {
+                      setState(() {
+                        isLoading = false;
+                      });
+                    },
+                  ),
+                )
                 ..loadRequest(Uri.parse('https://shivzo.in'));
 
               if (controller.platform is AndroidWebViewController) {
@@ -168,7 +223,62 @@ jobs:
             void _setupFirebaseMessaging() async {
               try {
                 FirebaseMessaging messaging = FirebaseMessaging.instance;
+                
                 await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+                const AndroidInitializationSettings initializationSettingsAndroid =
+                    AndroidInitializationSettings('@mipmap/ic_launcher');
+                const InitializationSettings initializationSettings =
+                    InitializationSettings(android: initializationSettingsAndroid);
+                
+                await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+                // 1. FCM टोकन जनरेट करना
+                String? token = await messaging.getToken();
+                
+                if (token != null && token.isNotEmpty) {
+                  debugPrint("=================================");
+                  debugPrint("SHIVZO FCM TOKEN: $token");
+                  debugPrint("=================================");
+
+                  // 2. 🗄️ लोकल स्टोरेज (SharedPreferences) में टोकन सेव करना
+                  final SharedPreferences prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('fcm_token', token);
+                  debugPrint("Token successfully saved to Local Storage!");
+                }
+
+                // 3. यदि भविष्य में टोकन बदले, तो उसे भी लोकल स्टोरेज में अपडेट करना
+                messaging.onTokenRefresh.listen((newToken) async {
+                  final SharedPreferences prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('fcm_token', newToken);
+                  debugPrint("Refreshed Token updated in Local Storage: $newToken");
+                });
+
+                // Foreground Notification Handler
+                FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+                  RemoteNotification? notification = message.notification;
+                  AndroidNotification? android = message.notification?.android;
+
+                  if (notification != null && android != null) {
+                    flutterLocalNotificationsPlugin.show(
+                      notification.hashCode,
+                      notification.title,
+                      notification.body,
+                      NotificationDetails(
+                        android: AndroidNotificationDetails(
+                          channel.id,
+                          channel.name,
+                          channelDescription: channel.description,
+                          icon: '@mipmap/ic_launcher',
+                          importance: Importance.max,
+                          priority: Priority.high,
+                          playSound: true,
+                        ),
+                      ),
+                    );
+                  }
+                });
+
               } catch (e) {
                 debugPrint("Messaging setup error: $e");
               }
@@ -183,22 +293,29 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(
-                  child: WebViewWidget(controller: controller),
-                ),
+              return Stack(
+                children: [
+                  WebViewWidget(controller: controller),
+                  if (isLoading)
+                    const Center(
+                      child: CircularProgressIndicator(
+                        color: Colors.orange,
+                      ),
+                    ),
+                ],
               );
             }
           }
           EOF
 
-      # 6. Build Release APK
-      - name: Build APK
-        run: flutter build apk --release
+      # 6. Build Optimized & Small APK
+      - name: Build Optimized APK
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/app/outputs/symbols
 
       # 7. Upload Artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shivzo-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: shivzo-release-small
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          
