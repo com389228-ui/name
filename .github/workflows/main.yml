@@ -194,6 +194,124 @@ jobs:
         with:
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          // Background Notification Handler
+          @pragma('vm:entry-point')
+          Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+            await Firebase.initializeApp();
+          }
+
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            
+            // Firebase Initialize करना
+            try {
+              await Firebase.initializeApp();
+              FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+            } catch (e) {
+              debugPrint("Firebase initialization error: $e");
+            }
+
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return const MaterialApp(
+                debugShowCheckedModeBanner: false,
+                home: WebViewScreen(),
+              );
+            }
+          }
+
+          class WebViewScreen extends StatefulWidget {
+            const WebViewScreen({super.key});
+
+            @override
+            State<WebViewScreen> createState() => _WebViewScreenState();
+          }
+
+          class _WebViewScreenState extends State<WebViewScreen> {
+            late final WebViewController controller;
+
+            @override
+            void initState() {
+              super.initState();
+              _setupFirebaseMessaging();
+              _requestPermissions();
+
+              final WebViewController controller = WebViewController();
+
+              controller
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..setBackgroundColor(const Color(0x00000000))
+                ..loadRequest(Uri.parse('https://shivzo.in'));
+
+              if (controller.platform is AndroidWebViewController) {
+                final AndroidWebViewController androidController =
+                    controller.platform as AndroidWebViewController;
+                
+                androidController.setMediaPlaybackRequiresUserGesture(false);
+                AndroidWebViewController.enableDebugging(true);
+              }
+
+              this.controller = controller;
+            }
+
+            // Firebase Messaging Setup (Foreground Notifications)
+            void _setupFirebaseMessaging() async {
+              FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+              await messaging.requestPermission(
+                alert: true,
+                badge: true,
+                sound: true,
+              );
+
+              // Foreground Notifications
+              FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+                if (message.notification != null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        "${message.notification?.title}: ${message.notification?.body}",
+                      ),
+                    ),
+                  );
+                }
+              });
+            }
+
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
+          }
+          EOF
+
+      # 7. APK बनाना
+      - name: Build APK
+        run: flutter build apk --release
+
+      # 8. APK डाउनलोड के लिए उपलब्ध कराना
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
 
             @override
             void initState() {
