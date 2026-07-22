@@ -1,21 +1,120 @@
-name: my_webview_app
-description: "A complete Flutter WebView app for Google"
-publish_to: 'none'
-version: 1.0.0+1
+name: Build Shivzo APK
 
-environment:
-  sdk: '>=3.0.0 <4.0.0'
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
-dependencies:
-  flutter:
-    sdk: flutter
-  webview_flutter: ^4.8.0
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-flutter:
-  uses-material-design: true
-  
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+
+      # 1. Clean Flutter Project बनाना
+      - name: Regenerate Clean Project
+        run: flutter create . --project-name shivzo_app --overwrite
+
+      # 2. आवश्यक पैकेजेस ऐड करना (WebView + Permission Handler)
+      - name: Add Packages
+        run: |
+          flutter pub add webview_flutter
+          flutter pub add permission_handler
+
+      # 3. AndroidManifest.xml में Internet, Location & Notification Permissions जोड़ना
+      - name: Inject Permissions into Manifest
+        run: |
+          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' android/app/src/main/AndroidManifest.xml
+
+      # 4. main.dart में Shivzo.in + Pop-up Permissions का कोड लिखना
+      - name: Write main.dart
+        run: |
+          cat << 'EOF' > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:webview_flutter/webview_flutter.dart';
+          import 'package:permission_handler/permission_handler.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return const MaterialApp(
+                debugShowCheckedModeBanner: false,
+                home: WebViewScreen(),
+              );
+            }
+          }
+
+          class WebViewScreen extends StatefulWidget {
+            const WebViewScreen({super.key});
+
+            @override
+            State<WebViewScreen> createState() => _WebViewScreenState();
+          }
+
+          class _WebViewScreenState extends State<WebViewScreen> {
+            late final WebViewController controller;
+
+            @override
+            void initState() {
+              super.initState();
+              
+              // ऐप खुलते ही परमिशन पॉप-अप दिखाएगा
+              _requestPermissions();
+
+              controller = WebViewController()
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..loadRequest(Uri.parse('https://shivzo.in'));
+            }
+
+            // परमिशन मांगने का फ़ंक्शन
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
+          }
+          EOF
+
+      # 5. APK बनाना
+      - name: Build APK
+        run: flutter build apk --release
+
+      # 6. APK डाउनलोड के लिए उपलब्ध कराना
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
