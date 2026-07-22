@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Shivzo App
 
 on:
   push:
@@ -12,9 +12,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
       - name: Set up Java JDK
         uses: actions/setup-java@v4
         with:
@@ -25,19 +22,122 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.x'
-          channel: 'stable'
 
-      - name: Get Dependencies
-        run: flutter pub get
+      - name: Create Clean Flutter App & Inject Features
+        run: |
+          # 1. नया प्रोजेक्ट बनाना
+          flutter create shivzo_app --org com.shivzo.app
+          cd shivzo_app
 
-      - name: Regenerate Android Project Structure
-        run: flutter create . --overwrite
+          # 2. आवश्यक पैकेजेस (WebView + Permissions) ऐड करना
+          flutter pub add webview_flutter
+          flutter pub add permission_handler
 
-      - name: Build APK
-        run: flutter build apk --release
+          # 3. AndroidManifest.xml में Location & Internet Permissions जोड़ना
+          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
-      - name: Upload APK Artifact
+              <application
+                  android:label="Shivzo"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # 4. main.dart में Shivzo.in + Notification & Location Permission Dialogs लिखना
+          cat << 'EOF' > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:webview_flutter/webview_flutter.dart';
+          import 'package:permission_handler/permission_handler.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return const MaterialApp(
+                debugShowCheckedModeBanner: false,
+                home: WebViewScreen(),
+              );
+            }
+          }
+
+          class WebViewScreen extends StatefulWidget {
+            const WebViewScreen({super.key});
+
+            @override
+            State<WebViewScreen> createState() => _WebViewScreenState();
+          }
+
+          class _WebViewScreenState extends State<WebViewScreen> {
+            late final WebViewController controller;
+
+            @override
+            void initState() {
+              super.initState();
+              
+              // ऐप खुलते ही परमिशन का पॉप-अप माँगेगा
+              _requestPermissions();
+
+              controller = WebViewController()
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..setNavigationDelegate(
+                  NavigationDelegate(
+                    onGeolocationPermissionsShowPrompt: (request) async {
+                      await Permission.location.request();
+                    },
+                  ),
+                )
+                ..loadRequest(Uri.parse('https://shivzo.in'));
+            }
+
+            Future<void> _requestPermissions() async {
+              // लोकेशन और नोटिफिकेशन परमिशन का पॉप-अप
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
+          }
+          EOF
+
+          # 5. APK बिल्ड करना
+          flutter build apk --release
+
+      - name: Upload Shivzo APK
         uses: actions/upload-artifact@v4
         with:
-          name: google-app-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: shivzo-app-release
+          path: shivzo_app/build/app/outputs/flutter-apk/app-release.apk
