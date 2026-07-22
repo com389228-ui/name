@@ -88,6 +88,12 @@ jobs:
           </manifest>
           EOF
 
+      # 4.5. Fix minSdkVersion (Required for Firebase Messaging)
+      - name: Set minSdkVersion to 21
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
+
       # 5. Write main.dart
       - name: Write main.dart
         run: |
@@ -108,6 +114,94 @@ jobs:
             WidgetsFlutterBinding.ensureInitialized();
             try {
               await Firebase.initializeApp();
+              FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+            } catch (e) {
+              debugPrint("Firebase init note: $e");
+            }
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return const MaterialApp(
+                debugShowCheckedModeBanner: false,
+                home: WebViewScreen(),
+              );
+            }
+          }
+
+          class WebViewScreen extends StatefulWidget {
+            const WebViewScreen({super.key});
+
+            @override
+            State<WebViewScreen> createState() => _WebViewScreenState();
+          }
+
+          class _WebViewScreenState extends State<WebViewScreen> {
+            late final WebViewController controller;
+
+            @override
+            void initState() {
+              super.initState();
+              _setupFirebaseMessaging();
+              _requestPermissions();
+
+              final WebViewController controller = WebViewController();
+
+              controller
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..setBackgroundColor(const Color(0x00000000))
+                ..loadRequest(Uri.parse('https://shivzo.in'));
+
+              if (controller.platform is AndroidWebViewController) {
+                final AndroidWebViewController androidController =
+                    controller.platform as AndroidWebViewController;
+                androidController.setMediaPlaybackRequiresUserGesture(false);
+              }
+
+              this.controller = controller;
+            }
+
+            void _setupFirebaseMessaging() async {
+              try {
+                FirebaseMessaging messaging = FirebaseMessaging.instance;
+                await messaging.requestPermission(alert: true, badge: true, sound: true);
+              } catch (e) {
+                debugPrint("Messaging setup error: $e");
+              }
+            }
+
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
+          }
+          EOF
+
+      # 6. Build Release APK
+      - name: Build APK
+        run: flutter build apk --release
+
+      # 7. Upload Artifact
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
               FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
             } catch (e) {
               debugPrint("Firebase init note: $e");
