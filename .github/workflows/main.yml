@@ -1,4 +1,4 @@
-Name: Build Shivzo Compact APK
+name: Build Shivzo Compact APK
 
 on:
   push:
@@ -241,7 +241,7 @@ jobs:
                   debugPrint("SHIVZO FCM TOKEN: $token");
                   debugPrint("=================================");
 
-                  // 2. 🗄️ लोकल स्टोरेज (SharedPreferences) में टोकन सेव करना
+                  // 2. लोकल स्टोरेज में टोकन सेव करना
                   final SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('fcm_token', token);
                   debugPrint("Token successfully saved to Local Storage!");
