@@ -1,4 +1,4 @@
-name: Build Shivzo Compact APK
+name: Build Shivzo Complete APK
 
 on:
   push:
@@ -27,11 +27,11 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      # 1. Clean Project बनाना
+      # 1. Clean Project
       - name: Regenerate Clean Project
         run: flutter create . --org com.shivzo --project-name app --overwrite
 
-      # 2. Add Packages
+      # 2. Add Required Packages
       - name: Add Packages
         run: |
           flutter pub add webview_flutter
@@ -42,7 +42,7 @@ jobs:
           flutter pub add flutter_local_notifications
           flutter pub add shared_preferences
 
-      # 3. Setup Google Services JSON
+      # 3. Copy google-services.json
       - name: Setup Google Services JSON
         run: |
           if [ -f "google-services.json" ]; then
@@ -52,7 +52,7 @@ jobs:
             echo "Warning: google-services.json not found in root, proceeding anyway..."
           fi
 
-      # 4. Write AndroidManifest.xml
+      # 4. AndroidManifest.xml Write
       - name: Write AndroidManifest.xml
         run: |
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
@@ -95,13 +95,13 @@ jobs:
           </manifest>
           EOF
 
-      # 4.5. Set minSdkVersion to 21
+      # 5. Set minSdkVersion to 21
       - name: Set minSdkVersion to 21
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
 
-      # 5. Write main.dart
+      # 6. Write main.dart (Token Pop-up Added)
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -128,7 +128,6 @@ jobs:
           @pragma('vm:entry-point')
           Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             await Firebase.initializeApp();
-            debugPrint("Background Message Received: ${message.messageId}");
           }
 
           void main() async {
@@ -148,7 +147,7 @@ jobs:
                 sound: true,
               );
             } catch (e) {
-              debugPrint("Firebase init error: $e");
+              debugPrint("Firebase error: $e");
             }
             runApp(const MyApp());
           }
@@ -165,29 +164,15 @@ jobs:
             }
           }
 
-          class WebViewScreen extends StatelessWidget {
+          class WebViewScreen extends StatefulWidget {
             const WebViewScreen({super.key});
 
             @override
-            Widget build(BuildContext context) {
-              return const Scaffold(
-                body: SafeArea(
-                  child: WebViewWidgetContainer(),
-                ),
-              );
-            }
+            State<WebViewScreen> createState() => _WebViewScreenState();
           }
 
-          class WebViewWidgetContainer extends StatefulWidget {
-            const WebViewWidgetContainer({super.key});
-
-            @override
-            State<WebViewWidgetContainer> createState() => _WebViewWidgetContainerState();
-          }
-
-          class _WebViewWidgetContainerState extends State<WebViewWidgetContainer> {
+          class _WebViewScreenState extends State<WebViewScreen> {
             late final WebViewController controller;
-            bool isLoading = true;
 
             @override
             void initState() {
@@ -200,25 +185,13 @@ jobs:
               controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
-                ..setNavigationDelegate(
-                  NavigationDelegate(
-                    onPageFinished: (String url) {
-                      setState(() {
-                        isLoading = false;
-                      });
-                    },
-                  ),
-                )
                 ..loadRequest(Uri.parse('https://shivzo.in'));
 
-              // 🔥 CACHE, SESSION और DOM STORAGE (LOCAL STORAGE) चालू करने का कोड:
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
                     controller.platform as AndroidWebViewController;
                 
                 androidController.setMediaPlaybackRequiresUserGesture(false);
-                
-                // WebView में LocalStorage और Cache इनेबल करना
                 androidController.setGeolocationPermissionsPromptCallbacks(
                   onShowPrompt: (request) async {
                     return const GeolocationPermissionsResponse(
@@ -232,10 +205,26 @@ jobs:
               this.controller = controller;
             }
 
+            void _showTokenPopup(String token) {
+              if (!mounted) return;
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text("FCM Token (Copy Mode)"),
+                  content: SelectableText(token),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("OK"),
+                    ),
+                  ],
+                ),
+              );
+            }
+
             void _setupFirebaseMessaging() async {
               try {
                 FirebaseMessaging messaging = FirebaseMessaging.instance;
-                
                 await messaging.requestPermission(alert: true, badge: true, sound: true);
 
                 const AndroidInitializationSettings initializationSettingsAndroid =
@@ -246,17 +235,15 @@ jobs:
                 await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
                 String? token = await messaging.getToken();
-                
                 if (token != null && token.isNotEmpty) {
-                  debugPrint("SHIVZO FCM TOKEN: $token");
                   final SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('fcm_token', token);
+                  
+                  // 🔥 टोकन का पॉप-अप दिखाने के लिए
+                  Future.delayed(const Duration(seconds: 1), () {
+                    _showTokenPopup(token);
+                  });
                 }
-
-                messaging.onTokenRefresh.listen((newToken) async {
-                  final SharedPreferences prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('fcm_token', newToken);
-                });
 
                 FirebaseMessaging.onMessage.listen((RemoteMessage message) {
                   RemoteNotification? notification = message.notification;
@@ -281,9 +268,8 @@ jobs:
                     );
                   }
                 });
-
               } catch (e) {
-                debugPrint("Messaging setup error: $e");
+                debugPrint("FCM error: $e");
               }
             }
 
@@ -296,28 +282,22 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              return Stack(
-                children: [
-                  WebViewWidget(controller: controller),
-                  if (isLoading)
-                    const Center(
-                      child: CircularProgressIndicator(
-                        color: Colors.orange,
-                      ),
-                    ),
-                ],
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
               );
             }
           }
           EOF
 
-      # 6. Build Optimized & Small APK
+      # 7. Build APK
       - name: Build Optimized APK
-        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/app/outputs/symbols
+        run: flutter build apk --release
 
-      # 7. Upload Artifact
+      # 8. Upload Artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shivzo-release-small
-          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
