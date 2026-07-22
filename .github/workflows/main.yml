@@ -27,7 +27,7 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      # 1. Fresh Project Regenerate करना
+      # 1. Clean Project बनाना
       - name: Regenerate Clean Project
         run: flutter create . --org com.shivzo --project-name app --overwrite
 
@@ -40,7 +40,7 @@ jobs:
           flutter pub add firebase_core
           flutter pub add firebase_messaging
 
-      # 3. Copy google-services.json
+      # 3. Setup Google Services JSON
       - name: Setup Google Services JSON
         run: |
           if [ -f "google-services.json" ]; then
@@ -50,7 +50,7 @@ jobs:
             echo "Warning: google-services.json not found in root, proceeding anyway..."
           fi
 
-      # 4. Correct AndroidManifest.xml Write
+      # 4. Write AndroidManifest.xml
       - name: Write AndroidManifest.xml
         run: |
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
@@ -88,7 +88,7 @@ jobs:
           </manifest>
           EOF
 
-      # 4.5. Fix minSdkVersion (Required for Firebase Messaging)
+      # 4.5. Set minSdkVersion to 21
       - name: Set minSdkVersion to 21
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
@@ -108,6 +108,100 @@ jobs:
           @pragma('vm:entry-point')
           Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             await Firebase.initializeApp();
+          }
+
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            try {
+              await Firebase.initializeApp();
+              FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+            } catch (e) {
+              debugPrint("Firebase init note: $e");
+            }
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return const MaterialApp(
+                debugShowCheckedModeBanner: false,
+                home: WebViewScreen(),
+              );
+            }
+          }
+
+          class WebViewScreen extends StatefulWidget {
+            const WebViewScreen({super.key});
+
+            @override
+            State<WebViewScreen> createState() => _WebViewScreenState();
+          }
+
+          class _WebViewScreenState extends State<WebViewScreen> {
+            late final WebViewController controller;
+
+            @override
+            void initState() {
+              super.initState();
+              _setupFirebaseMessaging();
+              _requestPermissions();
+
+              final WebViewController controller = WebViewController();
+
+              controller
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..setBackgroundColor(const Color(0x00000000))
+                ..loadRequest(Uri.parse('https://shivzo.in'));
+
+              if (controller.platform is AndroidWebViewController) {
+                final AndroidWebViewController androidController =
+                    controller.platform as AndroidWebViewController;
+                androidController.setMediaPlaybackRequiresUserGesture(false);
+              }
+
+              this.controller = controller;
+            }
+
+            void _setupFirebaseMessaging() async {
+              try {
+                FirebaseMessaging messaging = FirebaseMessaging.instance;
+                await messaging.requestPermission(alert: true, badge: true, sound: true);
+              } catch (e) {
+                debugPrint("Messaging setup error: $e");
+              }
+            }
+
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
+          }
+          EOF
+
+      # 6. Build Release APK
+      - name: Build APK
+        run: flutter build apk --release
+
+      # 7. Upload Artifact
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
           }
 
           void main() async {
