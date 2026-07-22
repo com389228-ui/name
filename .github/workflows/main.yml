@@ -95,7 +95,7 @@ jobs:
           </manifest>
           EOF
 
-      # 4.5. Set minSdkVersion to 21 & Enable Shrink
+      # 4.5. Set minSdkVersion to 21
       - name: Set minSdkVersion to 21
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
@@ -211,10 +211,22 @@ jobs:
                 )
                 ..loadRequest(Uri.parse('https://shivzo.in'));
 
+              // 🔥 CACHE, SESSION और DOM STORAGE (LOCAL STORAGE) चालू करने का कोड:
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
                     controller.platform as AndroidWebViewController;
+                
                 androidController.setMediaPlaybackRequiresUserGesture(false);
+                
+                // WebView में LocalStorage और Cache इनेबल करना
+                androidController.setGeolocationPermissionsPromptCallbacks(
+                  onShowPrompt: (request) async {
+                    return const GeolocationPermissionsResponse(
+                      allow: true,
+                      retain: true,
+                    );
+                  },
+                );
               }
 
               this.controller = controller;
@@ -233,24 +245,17 @@ jobs:
                 
                 await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-                // FCM टोकन जनरेट करना
                 String? token = await messaging.getToken();
                 
                 if (token != null && token.isNotEmpty) {
-                  debugPrint("=================================");
                   debugPrint("SHIVZO FCM TOKEN: $token");
-                  debugPrint("=================================");
-
-                  // लोकल स्टोरेज में सेव करना
                   final SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('fcm_token', token);
-                  debugPrint("Token successfully saved to Local Storage!");
                 }
 
                 messaging.onTokenRefresh.listen((newToken) async {
                   final SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('fcm_token', newToken);
-                  debugPrint("Refreshed Token updated in Local Storage: $newToken");
                 });
 
                 FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -316,4 +321,3 @@ jobs:
         with:
           name: shivzo-release-small
           path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-          
