@@ -318,4 +318,3 @@ jobs:
         with:
           name: shivzo-release-small
           path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-          
