@@ -27,7 +27,7 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      # 1. Flutter खुद एकदम सही ढांचा बनाएगा (कोई XML डिलीट नहीं होगी)
+      # 1. Clean Flutter Project बनाना
       - name: Regenerate Clean Project
         run: flutter create . --project-name shivzo_app --overwrite
 
@@ -37,7 +37,12 @@ jobs:
           flutter pub add webview_flutter
           flutter pub add permission_handler
 
-      # 3. केवल main.dart में Shivzo.in + Permission का कोड लिखना
+      # 3. AndroidManifest.xml में Internet Permission खुद Inject करना
+      - name: Inject Internet Permission
+        run: |
+          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+
+      # 4. main.dart में Shivzo.in + Permission का कोड लिखना
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -100,13 +105,15 @@ jobs:
           }
           EOF
 
-      # 4. APK बनाना
+      # 5. APK बनाना
       - name: Build APK
         run: flutter build apk --release
 
-      # 5. APK डाउनलोड के लिए देना
+      # 6. APK डाउनलोड के लिए देना
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
