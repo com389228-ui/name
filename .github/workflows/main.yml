@@ -27,31 +27,72 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      # 1. Clean Flutter Project बनाना
+      # 1. Clean Flutter Project बनाना (Package Name: com.shivzo.app)
       - name: Regenerate Clean Project
-        run: flutter create . --project-name shivzo_app --overwrite
+        run: flutter create . --org com.shivzo --project-name app --overwrite
 
-      # 2. आवश्यक पैकेजेस ऐड करना (WebView + Permission Handler)
+      # 2. आवश्यक पैकेजेस ऐड करना (Firebase Core + Messaging + WebView)
       - name: Add Packages
         run: |
           flutter pub add webview_flutter
+          flutter pub add webview_flutter_android
           flutter pub add permission_handler
+          flutter pub add firebase_core
+          flutter pub add firebase_messaging
 
-      # 3. AndroidManifest.xml में Internet, Location & Notification Permissions जोड़ना
+      # 3. Google Services JSON फ़ाइल को सही फोल्डर (android/app/) में कॉपी करना
+      - name: Setup Google Services JSON
+        run: |
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/
+            echo "google-services.json copied to android/app/"
+          else
+            echo "Error: google-services.json not found in root directory!"
+            exit 1
+          fi
+
+      # 4. Gradle फ़ाइलों में Firebase Plugins जोड़ना
+      - name: Configure Firebase in Gradle
+        run: |
+          # Project-level build.gradle plugin
+          sed -i '/id "com.android.application"/a \    id "com.google.gms.google-services" version "4.4.1" apply false' android/build.gradle
+          
+          # App-level build.gradle plugin
+          sed -i '/plugins {/a \    id "com.google.gms.google-services"' android/app/build.gradle
+
+      # 5. AndroidManifest.xml में Permissions और Channels जोड़ना
       - name: Inject Permissions into Manifest
         run: |
           sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' android/app/src/main/AndroidManifest.xml
 
-      # 4. main.dart में Shivzo.in + Pop-up Permissions का कोड लिखना
+      # 6. main.dart में Firebase, WebView, Storage & Permissions जोड़ना
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:webview_flutter/webview_flutter.dart';
+          import 'package:webview_flutter_android/webview_flutter_android.dart';
           import 'package:permission_handler/permission_handler.dart';
+          import 'package:firebase_core/firebase_core.dart';
+          import 'package:firebase_messaging/firebase_messaging.dart';
 
-          void main() {
+          // Background Notification Handler
+          @pragma('vm:entry-point')
+          Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+            await Firebase.initializeApp();
+          }
+
+          void main() async {
             WidgetsFlutterBinding.ensureInitialized();
+            
+            // Firebase Initialize करना
+            try {
+              await Firebase.initializeApp();
+              FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+            } catch (e) {
+              debugPrint("Firebase initialization error: $e");
+            }
+
             runApp(const MyApp());
           }
 
@@ -76,6 +117,83 @@ jobs:
 
           class _WebViewScreenState extends State<WebViewScreen> {
             late final WebViewController controller;
+
+            @override
+            void initState() {
+              super.initState();
+              _setupFirebaseMessaging();
+              _requestPermissions();
+
+              final WebViewController controller = WebViewController();
+
+              controller
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..setBackgroundColor(const Color(0x00000000))
+                ..loadRequest(Uri.parse('https://shivzo.in'));
+
+              if (controller.platform is AndroidWebViewController) {
+                final AndroidWebViewController androidController =
+                    controller.platform as AndroidWebViewController;
+                
+                androidController.setMediaPlaybackRequiresUserGesture(false);
+                AndroidWebViewController.enableDebugging(true);
+              }
+
+              this.controller = controller;
+            }
+
+            // Firebase Messaging Setup (Foreground Notifications)
+            void _setupFirebaseMessaging() async {
+              FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+              await messaging.requestPermission(
+                alert: true,
+                badge: true,
+                sound: true,
+              );
+
+              // Foreground Notifications
+              FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+                if (message.notification != null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        "${message.notification?.title}: ${message.notification?.body}",
+                      ),
+                    ),
+                  );
+                }
+              });
+            }
+
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
+          }
+          EOF
+
+      # 7. APK बनाना
+      - name: Build APK
+        run: flutter build apk --release
+
+      # 8. APK डाउनलोड के लिए उपलब्ध कराना
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shivzo-release
+          path: build/app/outputs/flutter-apk/app-release.apk
 
             @override
             void initState() {
