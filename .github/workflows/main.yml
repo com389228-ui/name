@@ -33,7 +33,7 @@ jobs:
           flutter pub add webview_flutter
           flutter pub add permission_handler
 
-          # 3. AndroidManifest.xml में Location & Internet Permissions जोड़ना
+          # 3. AndroidManifest.xml में Flutter Embedding v2 + Permissions जोड़ना
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -45,6 +45,12 @@ jobs:
                   android:label="Shivzo"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
+                  
+                  <!-- Flutter Embedding v2 Fix -->
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
