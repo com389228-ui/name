@@ -115,5 +115,3 @@ jobs:
         with:
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
-          name: shivzo-release
-          path: build/app/outputs/flutter-apk/app-release.apk
