@@ -1,4 +1,4 @@
-name: Build Complete APK with OneSignal
+name: Build Complete APK
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
+          flutter-version: '3.19.x'
           channel: 'stable'
 
       - name: Regenerate Clean Project
@@ -35,8 +35,11 @@ jobs:
           flutter pub add webview_flutter
           flutter pub add webview_flutter_android
           flutter pub add permission_handler
-          flutter pub add onesignal_flutter
+          flutter pub add firebase_core
+          flutter pub add firebase_messaging
+          flutter pub add flutter_local_notifications
           flutter pub add shared_preferences
+          flutter pub add onesignal_flutter
 
       - name: Fix Kotlin Gradle Configuration for OneSignal
         run: |
@@ -44,10 +47,16 @@ jobs:
             sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
           fi
 
-      - name: Set minSdkVersion to 21
+      - name: Setup Google Services JSON (CRITICAL STEP)
         run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
-          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/
+            echo "✅ google-services.json successfully copied to android/app/"
+          else
+            echo "❌ ERROR: google-services.json NOT FOUND in the root of your GitHub repository!"
+            echo "Firebase will throw the '[DEFAULT] app not found' error without this file."
+            exit 1 
+          fi
 
       - name: Write AndroidManifest.xml
         run: |
@@ -62,6 +71,10 @@ jobs:
                   android:label="Shivzo"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
+                  
+                  <meta-data
+                      android:name="com.google.firebase.messaging.default_notification_channel_id"
+                      android:value="high_importance_channel" />
 
                   <activity
                       android:name=".MainActivity"
@@ -87,6 +100,11 @@ jobs:
           </manifest>
           EOF
 
+      - name: Set minSdkVersion to 21
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
+
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -94,10 +112,53 @@ jobs:
           import 'package:webview_flutter/webview_flutter.dart';
           import 'package:webview_flutter_android/webview_flutter_android.dart';
           import 'package:permission_handler/permission_handler.dart';
+          import 'package:firebase_core/firebase_core.dart';
+          import 'package:firebase_messaging/firebase_messaging.dart';
+          import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
           import 'package:onesignal_flutter/onesignal_flutter.dart';
 
-          void main() {
+          const AndroidNotificationChannel channel = AndroidNotificationChannel(
+            'high_importance_channel',
+            'High Importance Notifications',
+            description: 'This channel is used for important notifications.',
+            importance: Importance.max,
+            playSound: true,
+          );
+
+          final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+              FlutterLocalNotificationsPlugin();
+
+          @pragma('vm:entry-point')
+          Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+            try {
+              await Firebase.initializeApp();
+            } catch (e) {
+              debugPrint("Background Firebase Error: \$e");
+            }
+          }
+
+          void main() async {
             WidgetsFlutterBinding.ensureInitialized();
+            
+            try {
+              await Firebase.initializeApp();
+              FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+              await flutterLocalNotificationsPlugin
+                  .resolvePlatformSpecificImplementation<
+                      AndroidFlutterLocalNotificationsPlugin>()
+                  ?.createNotificationChannel(channel);
+
+              await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+                alert: true,
+                badge: true,
+                sound: true,
+              );
+            } catch (e) {
+              debugPrint("🔥 Firebase Initialization Error: \$e");
+            }
+            
             runApp(const MyApp());
           }
 
@@ -132,7 +193,7 @@ jobs:
               controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
-                ..loadRequest(Uri.parse('https://shivzo.in'));
+                ..loadRequest(Uri.parse('https://shivzo.in')); 
 
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
@@ -154,18 +215,19 @@ jobs:
 
               WidgetsBinding.instance.addPostFrameCallback((_) async {
                 await _requestPermissions();
-                await _setupOneSignal();
+                await _setupFirebaseMessaging();
+                await _setupOneSignal(); // OneSignal कॉल कर दिया
               });
             }
 
-            void _showTokenPopup(String id) {
+            void _showTokenPopup(String token) {
               if (!mounted) return;
               showDialog(
                 context: context,
                 barrierDismissible: false,
                 builder: (context) => AlertDialog(
-                  title: const Text("OneSignal Player ID"),
-                  content: SelectableText(id),
+                  title: const Text("FCM & OneSignal Status"),
+                  content: SelectableText(token),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
@@ -176,6 +238,64 @@ jobs:
               );
             }
 
+            // Firebase वाला फंक्शन वैसा का वैसा ही है
+            Future<void> _setupFirebaseMessaging() async {
+              try {
+                FirebaseMessaging messaging = FirebaseMessaging.instance;
+                await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+                const AndroidInitializationSettings initializationSettingsAndroid =
+                    AndroidInitializationSettings('@mipmap/ic_launcher');
+                const InitializationSettings initializationSettings =
+                    InitializationSettings(android: initializationSettingsAndroid);
+                
+                await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+                String? token = await messaging.getToken();
+                
+                if (token != null && token.isNotEmpty) {
+                  final SharedPreferences prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('fcm_token', token);
+                  
+                  Future.delayed(const Duration(seconds: 2), () {
+                    _showTokenPopup("FCM Token generated successfully! Check console for details.");
+                    debugPrint("FCM Token: \$token");
+                  });
+                } else {
+                  Future.delayed(const Duration(seconds: 2), () {
+                    _showTokenPopup("Token fetch failed. Ensure google-services.json is valid.");
+                  });
+                }
+
+                FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+                  RemoteNotification? notification = message.notification;
+                  AndroidNotification? android = message.notification?.android;
+
+                  if (notification != null && android != null) {
+                    flutterLocalNotificationsPlugin.show(
+                      notification.hashCode,
+                      notification.title,
+                      notification.body,
+                      NotificationDetails(
+                        android: AndroidNotificationDetails(
+                          channel.id,
+                          channel.name,
+                          channelDescription: channel.description,
+                          icon: '@mipmap/ic_launcher',
+                          importance: Importance.max,
+                          priority: Priority.high,
+                          playSound: true,
+                        ),
+                      ),
+                    );
+                  }
+                });
+              } catch (e) {
+                debugPrint("FCM setup error: \$e");
+              }
+            }
+
+            // OneSignal का नया फंक्शन ऐड कर दिया गया है
             Future<void> _setupOneSignal() async {
               try {
                 OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
@@ -183,10 +303,10 @@ jobs:
                 
                 await OneSignal.Notifications.requestPermission(true);
 
-                Future.delayed(const Duration(seconds: 3), () {
+                Future.delayed(const Duration(seconds: 5), () {
                   String? onesignalId = OneSignal.User.pushSubscription.id;
-                  if (onesignalId != null && onesignalId.isNotEmpty) {
-                    _showTokenPopup("OneSignal ID:\n$onesignalId");
+                  if (onesignalId != null && onesignalId.isNotEmpty && mounted) {
+                    debugPrint("OneSignal Player ID: \$onesignalId");
                   }
                 });
               } catch (e) {
@@ -226,10 +346,10 @@ jobs:
           EOF
 
       - name: Build Optimized APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shivzo-onesignal-release
+          name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
