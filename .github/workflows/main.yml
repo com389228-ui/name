@@ -1,4 +1,4 @@
-name: Build Shivzo App with OneSignal Notification
+Name: Build Complete APK with OneSignal
 
 on:
   push:
@@ -27,52 +27,27 @@ jobs:
           flutter-version: '3.22.x'
           channel: 'stable'
 
-      - name: Create Flutter App
+      - name: Regenerate Clean Project
         run: flutter create . --org com.shivzo --project-name app --overwrite
 
-      - name: Add Dependencies
+      - name: Add Packages
         run: |
           flutter pub add webview_flutter
+          flutter pub add webview_flutter_android
           flutter pub add permission_handler
           flutter pub add onesignal_flutter
+          flutter pub add shared_preferences
 
-      - name: Force Upgrade Kotlin to 2.0.20
+      - name: Fix Kotlin Gradle Configuration for OneSignal
         run: |
-          # 1. Force Kotlin 2.0.20 in android/settings.gradle
-          cat << 'EOF' > android/settings.gradle
-          pluginManagement {
-              def flutterSdkPath = {
-                  def properties = new Properties()
-                  def propertiesFile = new File(rootDir, 'local.properties')
-                  if (propertiesFile.exists()) {
-                      propertiesFile.withReader('UTF-8') { reader -> properties.load(reader) }
-                  }
-                  def flutterSdkPath = properties.getProperty('flutter.sdk')
-                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-                  return flutterSdkPath
-              }()
+          if [ -f "android/settings.gradle" ]; then
+            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
+          fi
 
-              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          plugins {
-              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.3.0" apply false
-              id "org.jetbrains.kotlin.android" version "2.0.20" apply false
-          }
-
-          include ":app"
-          EOF
-
-          # 2. Set minSdkVersion to 21
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
-          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
+      - name: Set minSdkVersion to 21
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
 
       - name: Write AndroidManifest.xml
         run: |
@@ -87,7 +62,7 @@ jobs:
                   android:label="Shivzo"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
-                  
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -112,11 +87,12 @@ jobs:
           </manifest>
           EOF
 
-      - name: Write main.dart with OneSignal
+      - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:webview_flutter/webview_flutter.dart';
+          import 'package:webview_flutter_android/webview_flutter_android.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:onesignal_flutter/onesignal_flutter.dart';
 
@@ -151,60 +127,110 @@ jobs:
             void initState() {
               super.initState();
               
-              controller = WebViewController()
+              final WebViewController controller = WebViewController();
+
+              controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
                 ..loadRequest(Uri.parse('https://shivzo.in'));
 
+              if (controller.platform is AndroidWebViewController) {
+                final AndroidWebViewController androidController =
+                    controller.platform as AndroidWebViewController;
+                
+                androidController.setMediaPlaybackRequiresUserGesture(false);
+                
+                androidController.setGeolocationPermissionsPromptCallbacks(
+                  onShowPrompt: (request) async {
+                    return const GeolocationPermissionsResponse(
+                      allow: true,
+                      retain: true,
+                    );
+                  },
+                );
+              }
+
+              this.controller = controller;
+
               WidgetsBinding.instance.addPostFrameCallback((_) async {
-                await [Permission.notification, Permission.location].request();
-                await _initOneSignal();
+                await _requestPermissions();
+                await _setupOneSignal();
               });
             }
 
-            Future<void> _initOneSignal() async {
-              OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
-              OneSignal.initialize("85fa9f94-5bdb-4076-a585-6327f3934e2f");
-              
-              await OneSignal.Notifications.requestPermission(true);
-
-              Future.delayed(const Duration(seconds: 3), () {
-                String? onesignalId = OneSignal.User.pushSubscription.id;
-                
-                if (onesignalId != null && onesignalId.isNotEmpty && mounted) {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text("ONESIGNAL SUCCESS"),
-                      content: SelectableText("Player ID:\n$onesignalId"),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text("OK"),
-                        ),
-                      ],
+            void _showTokenPopup(String id) {
+              if (!mounted) return;
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => AlertDialog(
+                  title: const Text("OneSignal Player ID"),
+                  content: SelectableText(id),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("OK"),
                     ),
-                  );
-                }
-              });
+                  ],
+                ),
+              );
+            }
+
+            Future<void> _setupOneSignal() async {
+              try {
+                OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
+                // तेरी OneSignal App ID सेट कर दी है
+                OneSignal.initialize("85fa9f94-5bdb-4076-a585-6327f3934e2f");
+                
+                await OneSignal.Notifications.requestPermission(true);
+
+                Future.delayed(const Duration(seconds: 3), () {
+                  String? onesignalId = OneSignal.User.pushSubscription.id;
+                  if (onesignalId != null && onesignalId.isNotEmpty) {
+                    _showTokenPopup("OneSignal ID:\n$onesignalId");
+                  }
+                });
+              } catch (e) {
+                debugPrint("OneSignal setup error: \$e");
+              }
+            }
+
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.notification,
+                Permission.location,
+              ].request();
             }
 
             @override
             Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(
-                  child: WebViewWidget(controller: controller),
+              return PopScope(
+                canPop: false,
+                onPopInvoked: (didPop) async {
+                  if (didPop) return;
+                  if (await controller.canGoBack()) {
+                    controller.goBack();
+                  } else {
+                    if (context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  }
+                },
+                child: Scaffold(
+                  body: SafeArea(
+                    child: WebViewWidget(controller: controller),
+                  ),
                 ),
               );
             }
           }
           EOF
 
-      - name: Build Release APK
+      - name: Build Optimized APK
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shivzo-onesignal-app
+          name: shivzo-onesignal-release
           path: build/app/outputs/flutter-apk/app-release.apk
