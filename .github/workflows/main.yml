@@ -36,16 +36,41 @@ jobs:
           flutter pub add permission_handler
           flutter pub add onesignal_flutter
 
-      - name: Fix Kotlin & Gradle Configuration
+      - name: Force Upgrade Kotlin to 2.0.20
         run: |
-          if [ -f "android/settings.gradle" ]; then
-            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
-          fi
+          # 1. Force Kotlin 2.0.20 in android/settings.gradle
+          cat << 'EOF' > android/settings.gradle
+          pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  def propertiesFile = new File(rootDir, 'local.properties')
+                  if (propertiesFile.exists()) {
+                      propertiesFile.withReader('UTF-8') { reader -> properties.load(reader) }
+                  }
+                  def flutterSdkPath = properties.getProperty('flutter.sdk')
+                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+                  return flutterSdkPath
+              }()
 
-          if [ -f "android/build.gradle" ]; then
-            sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.20"/g' android/build.gradle || true
-          fi
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          plugins {
+              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+              id "com.android.application" version "8.3.0" apply false
+              id "org.jetbrains.kotlin.android" version "2.0.20" apply false
+          }
+
+          include ":app"
+          EOF
+
+          # 2. Set minSdkVersion to 21
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
 
@@ -87,7 +112,7 @@ jobs:
           </manifest>
           EOF
 
-      - name: Write main.dart with Fixed OneSignal Integration
+      - name: Write main.dart with OneSignal
         run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
