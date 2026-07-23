@@ -40,13 +40,15 @@ jobs:
           flutter pub add flutter_local_notifications
           flutter pub add shared_preferences
 
-      - name: Setup Google Services JSON
+      - name: Setup Google Services JSON (CRITICAL STEP)
         run: |
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/
-            echo "google-services.json copied to android/app/"
+            echo "✅ google-services.json successfully copied to android/app/"
           else
-            echo "Warning: google-services.json not found in root, proceeding anyway..."
+            echo "❌ ERROR: google-services.json NOT FOUND in the root of your GitHub repository!"
+            echo "Firebase will throw the '[DEFAULT] app not found' error without this file."
+            exit 1 # यह बिल्ड को यहीं रोक देगा ताकि तू बिना फाइल के गलत APK न बनाए
           fi
 
       - name: Write AndroidManifest.xml
@@ -121,12 +123,20 @@ jobs:
 
           @pragma('vm:entry-point')
           Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-            await Firebase.initializeApp();
+            // बैकग्राउंड में भी Firebase शुरू करना ज़रूरी है
+            try {
+              await Firebase.initializeApp();
+            } catch (e) {
+              debugPrint("Background Firebase Error: \$e");
+            }
           }
 
           void main() async {
+            // बाइंडिंग सबसे पहले होनी चाहिए
             WidgetsFlutterBinding.ensureInitialized();
+            
             try {
+              // Firebase इनिशियलाइज़
               await Firebase.initializeApp();
               FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -141,8 +151,10 @@ jobs:
                 sound: true,
               );
             } catch (e) {
-              debugPrint("Firebase error: $e");
+              debugPrint("🔥 Firebase Initialization Error: \$e");
+              // अगर Firebase फेल हो जाए, तो भी ऐप क्रैश न हो, इसलिए try-catch लगाया है
             }
+            
             runApp(const MyApp());
           }
 
@@ -177,7 +189,7 @@ jobs:
               controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
-                ..loadRequest(Uri.parse('https://shivzo.in'));
+                ..loadRequest(Uri.parse('https://shivzo.in')); // यहाँ shivzo.in सेट है
 
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
@@ -185,6 +197,7 @@ jobs:
                 
                 androidController.setMediaPlaybackRequiresUserGesture(false);
                 
+                // वेबसाइट को लोकेशन की परमिशन देने के लिए
                 androidController.setGeolocationPermissionsPromptCallbacks(
                   onShowPrompt: (request) async {
                     return const GeolocationPermissionsResponse(
@@ -209,7 +222,7 @@ jobs:
                 context: context,
                 barrierDismissible: false,
                 builder: (context) => AlertDialog(
-                  title: const Text("FCM Token (Copy)"),
+                  title: const Text("FCM Status"),
                   content: SelectableText(token),
                   actions: [
                     TextButton(
@@ -239,12 +252,14 @@ jobs:
                   final SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('fcm_token', token);
                   
+                  // डिबगिंग के लिए टोकन पॉपअप
                   Future.delayed(const Duration(seconds: 2), () {
-                    _showTokenPopup(token);
+                    _showTokenPopup("Token generated successfully! Check console for details.");
+                    debugPrint("FCM Token: \$token");
                   });
                 } else {
                   Future.delayed(const Duration(seconds: 2), () {
-                    _showTokenPopup("Token fetch failed. Check google-services.json!");
+                    _showTokenPopup("Token fetch failed. Ensure google-services.json is valid.");
                   });
                 }
 
@@ -272,8 +287,7 @@ jobs:
                   }
                 });
               } catch (e) {
-                debugPrint("FCM error: $e");
-                _showTokenPopup("Error: $e");
+                debugPrint("FCM setup error: \$e");
               }
             }
 
@@ -316,4 +330,3 @@ jobs:
         with:
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
-          
