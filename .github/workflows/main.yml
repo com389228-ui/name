@@ -101,7 +101,7 @@ jobs:
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
 
-      # 6. Write main.dart (With DOM Storage, Cache Clear & Performance Optimization)
+      # 6. Write main.dart (Cleaned & Error-Free)
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -185,18 +185,11 @@ jobs:
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
                 ..loadRequest(Uri.parse('https://shivzo.in'));
 
-              // 🔥 WebView LocalStorage, DOM Storage & Force Cache Clear Fix
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
                     controller.platform as AndroidWebViewController;
                 
                 androidController.setMediaPlaybackRequiresUserGesture(false);
-                androidController.setDomStorageEnabled(true);
-                androidController.setDatabaseEnabled(true);
-                androidController.setCacheEnabled(true);
-                
-                // पुराना फंसा हुआ कैशे तुरंत साफ़ करने के लिए
-                androidController.clearCache();
                 
                 androidController.setGeolocationPermissionsPromptCallbacks(
                   onShowPrompt: (request) async {
@@ -318,3 +311,4 @@ jobs:
         with:
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          
