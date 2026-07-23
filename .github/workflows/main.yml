@@ -24,7 +24,6 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x'
           channel: 'stable'
 
       - name: Regenerate Clean Project
@@ -40,12 +39,6 @@ jobs:
           flutter pub add flutter_local_notifications
           flutter pub add shared_preferences
           flutter pub add onesignal_flutter
-
-      - name: Fix Kotlin Gradle Configuration for OneSignal
-        run: |
-          if [ -f "android/settings.gradle" ]; then
-            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
-          fi
 
       - name: Setup Google Services JSON (CRITICAL STEP)
         run: |
@@ -216,7 +209,7 @@ jobs:
               WidgetsBinding.instance.addPostFrameCallback((_) async {
                 await _requestPermissions();
                 await _setupFirebaseMessaging();
-                await _setupOneSignal(); // OneSignal कॉल कर दिया
+                await _setupOneSignal();
               });
             }
 
@@ -238,7 +231,6 @@ jobs:
               );
             }
 
-            // Firebase वाला फंक्शन वैसा का वैसा ही है
             Future<void> _setupFirebaseMessaging() async {
               try {
                 FirebaseMessaging messaging = FirebaseMessaging.instance;
@@ -295,7 +287,6 @@ jobs:
               }
             }
 
-            // OneSignal का नया फंक्शन ऐड कर दिया गया है
             Future<void> _setupOneSignal() async {
               try {
                 OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
@@ -346,7 +337,7 @@ jobs:
           EOF
 
       - name: Build Optimized APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
