@@ -1,4 +1,4 @@
-Name: Build Complete APK with OneSignal
+name: Build Complete APK with OneSignal
 
 on:
   push:
@@ -179,7 +179,6 @@ jobs:
             Future<void> _setupOneSignal() async {
               try {
                 OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
-                // तेरी OneSignal App ID सेट कर दी है
                 OneSignal.initialize("85fa9f94-5bdb-4076-a585-6327f3934e2f");
                 
                 await OneSignal.Notifications.requestPermission(true);
