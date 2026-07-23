@@ -24,7 +24,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x'
+          flutter-version: '3.22.x'
           channel: 'stable'
 
       - name: Create Flutter App
@@ -35,6 +35,20 @@ jobs:
           flutter pub add webview_flutter
           flutter pub add permission_handler
           flutter pub add onesignal_flutter
+
+      - name: Fix Kotlin & Gradle Configuration for OneSignal
+        run: |
+          # Fix Kotlin version to 1.9.20 in android/build.gradle
+          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.20"/g' android/build.gradle || true
+          
+          # Inject Kotlin version if not present
+          if ! grep -q "ext.kotlin_version" android/build.gradle; then
+            sed -i '/buildscript {/a \    ext.kotlin_version = "1.9.20"' android/build.gradle
+          fi
+
+          # Set minSdkVersion to 21
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
 
       - name: Write AndroidManifest.xml
         run: |
@@ -74,7 +88,7 @@ jobs:
           </manifest>
           EOF
 
-      - name: Write main.dart with OneSignal Integration
+      - name: Write main.dart with OneSignal
         run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
@@ -125,16 +139,11 @@ jobs:
             }
 
             Future<void> _initOneSignal() async {
-              // 1. Debug Logs Enable (Testing ke liye)
               OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
-
-              // 2. OneSignal App ID ke sath Initialize
               OneSignal.initialize("85fa9f94-5bdb-4076-a585-6327f3934e2f");
-
-              // 3. Push Notification Permission Request
+              
               await OneSignal.Notifications.requestPermission(true);
 
-              // 4. Check if Subscription ID (Player ID) is generated
               Future.delayed(const Duration(seconds: 3), () {
                 String? onesignalId = OneSignal.User.pushSubscription.id;
                 
@@ -167,13 +176,8 @@ jobs:
           }
           EOF
 
-      - name: Set minSdkVersion to 21
-        run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
-          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
-
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
