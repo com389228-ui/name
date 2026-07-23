@@ -36,19 +36,16 @@ jobs:
           flutter pub add permission_handler
           flutter pub add onesignal_flutter
 
-      - name: Fix Kotlin & Gradle Configuration (Corrected for New Flutter Structure)
+      - name: Fix Kotlin & Gradle Configuration
         run: |
-          # Fix Kotlin version in settings.gradle (New Flutter requirement)
           if [ -f "android/settings.gradle" ]; then
             sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
           fi
 
-          # Fix Kotlin version in build.gradle as backup
           if [ -f "android/build.gradle" ]; then
             sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.20"/g' android/build.gradle || true
           fi
 
-          # Set minSdkVersion to 21
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
 
@@ -90,7 +87,7 @@ jobs:
           </manifest>
           EOF
 
-      - name: Write main.dart with OneSignal
+      - name: Write main.dart with Fixed OneSignal Integration
         run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
@@ -119,13 +116,7 @@ jobs:
             const WebViewScreen({super.key});
 
             @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(
-                  child: WebViewWidget(controller: controller),
-                ),
-              );
-            }
+            State<WebViewScreen> createState() => _WebViewScreenState();
           }
 
           class _WebViewScreenState extends State<WebViewScreen> {
