@@ -1,4 +1,4 @@
-name: Build Shivzo Complete APK
+name: Build Complete APK
 
 on:
   push:
@@ -27,11 +27,9 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      # 1. Clean Project
       - name: Regenerate Clean Project
         run: flutter create . --org com.shivzo --project-name app --overwrite
 
-      # 2. Add Required Packages
       - name: Add Packages
         run: |
           flutter pub add webview_flutter
@@ -42,7 +40,6 @@ jobs:
           flutter pub add flutter_local_notifications
           flutter pub add shared_preferences
 
-      # 3. Copy google-services.json
       - name: Setup Google Services JSON
         run: |
           if [ -f "google-services.json" ]; then
@@ -52,7 +49,6 @@ jobs:
             echo "Warning: google-services.json not found in root, proceeding anyway..."
           fi
 
-      # 4. AndroidManifest.xml Write
       - name: Write AndroidManifest.xml
         run: |
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
@@ -95,13 +91,11 @@ jobs:
           </manifest>
           EOF
 
-      # 5. Set minSdkVersion to 21
       - name: Set minSdkVersion to 21
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
 
-      # 6. Write main.dart (Cleaned & Error-Free with PopScope for Back Button)
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -183,7 +177,7 @@ jobs:
               controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
-                ..loadRequest(Uri.parse('https://shivzo.shop'));
+                ..loadRequest(Uri.parse('https://shivzo.in'));
 
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
@@ -294,7 +288,7 @@ jobs:
             Widget build(BuildContext context) {
               return PopScope(
                 canPop: false,
-                onPopInvokedWithResult: (didPop, result) async {
+                onPopInvoked: (didPop) async {
                   if (didPop) return;
                   if (await controller.canGoBack()) {
                     controller.goBack();
@@ -314,13 +308,12 @@ jobs:
           }
           EOF
 
-      # 7. Build APK
       - name: Build Optimized APK
         run: flutter build apk --release
 
-      # 8. Upload Artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          
