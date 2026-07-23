@@ -1,4 +1,4 @@
-name: Build Complete APK
+name: Build Shivzo App with OneSignal Notification
 
 on:
   push:
@@ -27,29 +27,14 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      - name: Regenerate Clean Project
+      - name: Create Flutter App
         run: flutter create . --org com.shivzo --project-name app --overwrite
 
-      - name: Add Packages
+      - name: Add Dependencies
         run: |
           flutter pub add webview_flutter
-          flutter pub add webview_flutter_android
           flutter pub add permission_handler
-          flutter pub add firebase_core
-          flutter pub add firebase_messaging
-          flutter pub add flutter_local_notifications
-          flutter pub add shared_preferences
-
-      - name: Setup Google Services JSON (CRITICAL STEP)
-        run: |
-          if [ -f "google-services.json" ]; then
-            cp google-services.json android/app/
-            echo "✅ google-services.json successfully copied to android/app/"
-          else
-            echo "❌ ERROR: google-services.json NOT FOUND in the root of your GitHub repository!"
-            echo "Firebase will throw the '[DEFAULT] app not found' error without this file."
-            exit 1 # यह बिल्ड को यहीं रोक देगा ताकि तू बिना फाइल के गलत APK न बनाए
-          fi
+          flutter pub add onesignal_flutter
 
       - name: Write AndroidManifest.xml
         run: |
@@ -65,10 +50,6 @@ jobs:
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
                   
-                  <meta-data
-                      android:name="com.google.firebase.messaging.default_notification_channel_id"
-                      android:value="high_importance_channel" />
-
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -93,68 +74,16 @@ jobs:
           </manifest>
           EOF
 
-      - name: Set minSdkVersion to 21
-        run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
-          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
-
-      - name: Write main.dart
+      - name: Write main.dart with OneSignal Integration
         run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:webview_flutter/webview_flutter.dart';
-          import 'package:webview_flutter_android/webview_flutter_android.dart';
           import 'package:permission_handler/permission_handler.dart';
-          import 'package:firebase_core/firebase_core.dart';
-          import 'package:firebase_messaging/firebase_messaging.dart';
-          import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:onesignal_flutter/onesignal_flutter.dart';
 
-          const AndroidNotificationChannel channel = AndroidNotificationChannel(
-            'high_importance_channel',
-            'High Importance Notifications',
-            description: 'This channel is used for important notifications.',
-            importance: Importance.max,
-            playSound: true,
-          );
-
-          final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-              FlutterLocalNotificationsPlugin();
-
-          @pragma('vm:entry-point')
-          Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-            // बैकग्राउंड में भी Firebase शुरू करना ज़रूरी है
-            try {
-              await Firebase.initializeApp();
-            } catch (e) {
-              debugPrint("Background Firebase Error: \$e");
-            }
-          }
-
-          void main() async {
-            // बाइंडिंग सबसे पहले होनी चाहिए
+          void main() {
             WidgetsFlutterBinding.ensureInitialized();
-            
-            try {
-              // Firebase इनिशियलाइज़
-              await Firebase.initializeApp();
-              FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
-              await flutterLocalNotificationsPlugin
-                  .resolvePlatformSpecificImplementation<
-                      AndroidFlutterLocalNotificationsPlugin>()
-                  ?.createNotificationChannel(channel);
-
-              await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-                alert: true,
-                badge: true,
-                sound: true,
-              );
-            } catch (e) {
-              debugPrint("🔥 Firebase Initialization Error: \$e");
-              // अगर Firebase फेल हो जाए, तो भी ऐप क्रैश न हो, इसलिए try-catch लगाया है
-            }
-            
             runApp(const MyApp());
           }
 
@@ -184,149 +113,70 @@ jobs:
             void initState() {
               super.initState();
               
-              final WebViewController controller = WebViewController();
-
-              controller
+              controller = WebViewController()
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
-                ..loadRequest(Uri.parse('https://shivzo.in')); // यहाँ shivzo.in सेट है
-
-              if (controller.platform is AndroidWebViewController) {
-                final AndroidWebViewController androidController =
-                    controller.platform as AndroidWebViewController;
-                
-                androidController.setMediaPlaybackRequiresUserGesture(false);
-                
-                // वेबसाइट को लोकेशन की परमिशन देने के लिए
-                androidController.setGeolocationPermissionsPromptCallbacks(
-                  onShowPrompt: (request) async {
-                    return const GeolocationPermissionsResponse(
-                      allow: true,
-                      retain: true,
-                    );
-                  },
-                );
-              }
-
-              this.controller = controller;
+                ..loadRequest(Uri.parse('https://shivzo.in'));
 
               WidgetsBinding.instance.addPostFrameCallback((_) async {
-                await _requestPermissions();
-                await _setupFirebaseMessaging();
+                await [Permission.notification, Permission.location].request();
+                await _initOneSignal();
               });
             }
 
-            void _showTokenPopup(String token) {
-              if (!mounted) return;
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) => AlertDialog(
-                  title: const Text("FCM Status"),
-                  content: SelectableText(token),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text("OK"),
-                    ),
-                  ],
-                ),
-              );
-            }
+            Future<void> _initOneSignal() async {
+              // 1. Debug Logs Enable (Testing ke liye)
+              OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
 
-            Future<void> _setupFirebaseMessaging() async {
-              try {
-                FirebaseMessaging messaging = FirebaseMessaging.instance;
-                await messaging.requestPermission(alert: true, badge: true, sound: true);
+              // 2. OneSignal App ID ke sath Initialize
+              OneSignal.initialize("85fa9f94-5bdb-4076-a585-6327f3934e2f");
 
-                const AndroidInitializationSettings initializationSettingsAndroid =
-                    AndroidInitializationSettings('@mipmap/ic_launcher');
-                const InitializationSettings initializationSettings =
-                    InitializationSettings(android: initializationSettingsAndroid);
+              // 3. Push Notification Permission Request
+              await OneSignal.Notifications.requestPermission(true);
+
+              // 4. Check if Subscription ID (Player ID) is generated
+              Future.delayed(const Duration(seconds: 3), () {
+                String? onesignalId = OneSignal.User.pushSubscription.id;
                 
-                await flutterLocalNotificationsPlugin.initialize(initializationSettings);
-
-                String? token = await messaging.getToken();
-                
-                if (token != null && token.isNotEmpty) {
-                  final SharedPreferences prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('fcm_token', token);
-                  
-                  // डिबगिंग के लिए टोकन पॉपअप
-                  Future.delayed(const Duration(seconds: 2), () {
-                    _showTokenPopup("Token generated successfully! Check console for details.");
-                    debugPrint("FCM Token: \$token");
-                  });
-                } else {
-                  Future.delayed(const Duration(seconds: 2), () {
-                    _showTokenPopup("Token fetch failed. Ensure google-services.json is valid.");
-                  });
-                }
-
-                FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-                  RemoteNotification? notification = message.notification;
-                  AndroidNotification? android = message.notification?.android;
-
-                  if (notification != null && android != null) {
-                    flutterLocalNotificationsPlugin.show(
-                      notification.hashCode,
-                      notification.title,
-                      notification.body,
-                      NotificationDetails(
-                        android: AndroidNotificationDetails(
-                          channel.id,
-                          channel.name,
-                          channelDescription: channel.description,
-                          icon: '@mipmap/ic_launcher',
-                          importance: Importance.max,
-                          priority: Priority.high,
-                          playSound: true,
+                if (onesignalId != null && onesignalId.isNotEmpty && mounted) {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text("ONESIGNAL SUCCESS"),
+                      content: SelectableText("Player ID:\n$onesignalId"),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text("OK"),
                         ),
-                      ),
-                    );
-                  }
-                });
-              } catch (e) {
-                debugPrint("FCM setup error: \$e");
-              }
-            }
-
-            Future<void> _requestPermissions() async {
-              await [
-                Permission.notification,
-                Permission.location,
-              ].request();
+                      ],
+                    ),
+                  );
+                }
+              });
             }
 
             @override
             Widget build(BuildContext context) {
-              return PopScope(
-                canPop: false,
-                onPopInvoked: (didPop) async {
-                  if (didPop) return;
-                  if (await controller.canGoBack()) {
-                    controller.goBack();
-                  } else {
-                    if (context.mounted) {
-                      Navigator.of(context).pop();
-                    }
-                  }
-                },
-                child: Scaffold(
-                  body: SafeArea(
-                    child: WebViewWidget(controller: controller),
-                  ),
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
                 ),
               );
             }
           }
           EOF
 
-      - name: Build Optimized APK
+      - name: Set minSdkVersion to 21
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
+
+      - name: Build Release APK
         run: flutter build apk --release
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shivzo-release
+          name: shivzo-onesignal-app
           path: build/app/outputs/flutter-apk/app-release.apk
