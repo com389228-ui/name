@@ -101,7 +101,7 @@ jobs:
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
 
-      # 6. Write main.dart (Cleaned & Error-Free)
+      # 6. Write main.dart (Cleaned & Error-Free with PopScope for Back Button)
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -183,7 +183,7 @@ jobs:
               controller
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
-                ..loadRequest(Uri.parse('https://shivzo.in'));
+                ..loadRequest(Uri.parse('https://shivzo.shop'));
 
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
@@ -292,9 +292,22 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(
-                  child: WebViewWidget(controller: controller),
+              return PopScope(
+                canPop: false,
+                onPopInvokedWithResult: (didPop, result) async {
+                  if (didPop) return;
+                  if (await controller.canGoBack()) {
+                    controller.goBack();
+                  } else {
+                    if (context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  }
+                },
+                child: Scaffold(
+                  body: SafeArea(
+                    child: WebViewWidget(controller: controller),
+                  ),
                 ),
               );
             }
@@ -311,4 +324,3 @@ jobs:
         with:
           name: shivzo-release
           path: build/app/outputs/flutter-apk/app-release.apk
-          
