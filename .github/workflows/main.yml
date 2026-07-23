@@ -101,7 +101,7 @@ jobs:
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
 
-      # 6. Write main.dart (Token Pop-up Added)
+      # 6. Write main.dart (With DOM Storage, Cache Clear & Performance Optimization)
       - name: Write main.dart
         run: |
           cat << 'EOF' > lib/main.dart
@@ -177,9 +177,7 @@ jobs:
             @override
             void initState() {
               super.initState();
-              _requestPermissions();
-              _setupFirebaseMessaging();
-
+              
               final WebViewController controller = WebViewController();
 
               controller
@@ -187,11 +185,19 @@ jobs:
                 ..setBackgroundColor(const Color(0xFFFFFFFF))
                 ..loadRequest(Uri.parse('https://shivzo.in'));
 
+              // 🔥 WebView LocalStorage, DOM Storage & Force Cache Clear Fix
               if (controller.platform is AndroidWebViewController) {
                 final AndroidWebViewController androidController =
                     controller.platform as AndroidWebViewController;
                 
                 androidController.setMediaPlaybackRequiresUserGesture(false);
+                androidController.setDomStorageEnabled(true);
+                androidController.setDatabaseEnabled(true);
+                androidController.setCacheEnabled(true);
+                
+                // पुराना फंसा हुआ कैशे तुरंत साफ़ करने के लिए
+                androidController.clearCache();
+                
                 androidController.setGeolocationPermissionsPromptCallbacks(
                   onShowPrompt: (request) async {
                     return const GeolocationPermissionsResponse(
@@ -203,14 +209,20 @@ jobs:
               }
 
               this.controller = controller;
+
+              WidgetsBinding.instance.addPostFrameCallback((_) async {
+                await _requestPermissions();
+                await _setupFirebaseMessaging();
+              });
             }
 
             void _showTokenPopup(String token) {
               if (!mounted) return;
               showDialog(
                 context: context,
+                barrierDismissible: false,
                 builder: (context) => AlertDialog(
-                  title: const Text("FCM Token (Copy Mode)"),
+                  title: const Text("FCM Token (Copy)"),
                   content: SelectableText(token),
                   actions: [
                     TextButton(
@@ -222,7 +234,7 @@ jobs:
               );
             }
 
-            void _setupFirebaseMessaging() async {
+            Future<void> _setupFirebaseMessaging() async {
               try {
                 FirebaseMessaging messaging = FirebaseMessaging.instance;
                 await messaging.requestPermission(alert: true, badge: true, sound: true);
@@ -235,13 +247,17 @@ jobs:
                 await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
                 String? token = await messaging.getToken();
+                
                 if (token != null && token.isNotEmpty) {
                   final SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('fcm_token', token);
                   
-                  // 🔥 टोकन का पॉप-अप दिखाने के लिए
-                  Future.delayed(const Duration(seconds: 1), () {
+                  Future.delayed(const Duration(seconds: 2), () {
                     _showTokenPopup(token);
+                  });
+                } else {
+                  Future.delayed(const Duration(seconds: 2), () {
+                    _showTokenPopup("Token fetch failed. Check google-services.json!");
                   });
                 }
 
@@ -270,6 +286,7 @@ jobs:
                 });
               } catch (e) {
                 debugPrint("FCM error: $e");
+                _showTokenPopup("Error: $e");
               }
             }
 
