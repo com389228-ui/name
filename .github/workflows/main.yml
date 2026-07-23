@@ -36,14 +36,16 @@ jobs:
           flutter pub add permission_handler
           flutter pub add onesignal_flutter
 
-      - name: Fix Kotlin & Gradle Configuration for OneSignal
+      - name: Fix Kotlin & Gradle Configuration (Corrected for New Flutter Structure)
         run: |
-          # Fix Kotlin version to 1.9.20 in android/build.gradle
-          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.20"/g' android/build.gradle || true
-          
-          # Inject Kotlin version if not present
-          if ! grep -q "ext.kotlin_version" android/build.gradle; then
-            sed -i '/buildscript {/a \    ext.kotlin_version = "1.9.20"' android/build.gradle
+          # Fix Kotlin version in settings.gradle (New Flutter requirement)
+          if [ -f "android/settings.gradle" ]; then
+            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
+          fi
+
+          # Fix Kotlin version in build.gradle as backup
+          if [ -f "android/build.gradle" ]; then
+            sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.20"/g' android/build.gradle || true
           fi
 
           # Set minSdkVersion to 21
@@ -117,7 +119,13 @@ jobs:
             const WebViewScreen({super.key});
 
             @override
-            State<WebViewScreen> createState() => _WebViewScreenState();
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: WebViewWidget(controller: controller),
+                ),
+              );
+            }
           }
 
           class _WebViewScreenState extends State<WebViewScreen> {
